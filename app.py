@@ -33,6 +33,12 @@ EMAILY_REFERENTI = {
     "Trimidal Joshua": "Trimidal@oktours.cz"
 }
 
+# Nastavení přihlášení k e-mailovému serveru ze Secrets
+SMTP_SENDER = os.getenv("SMTP_SENDER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com") # Změňte na smtp.office365.com u M365
+
+
 def najdi_email_referenta(jmeno_referenta):
     """Najde e-mail bez ohledu na pořadí Jméno/Příjmení."""
     if not jmeno_referenta or pd.isna(jmeno_referenta):
@@ -40,13 +46,13 @@ def najdi_email_referenta(jmeno_referenta):
     
     jmeno_std = str(jmeno_referenta).strip()
     
-    # 1. Přímá shoda
+    # 1. Přímá shoda (např. "Martínková Hana")
     if jmeno_std in EMAILY_REFERENTI:
         return EMAILY_REFERENTI[jmeno_std]
         
-    # 2. Shoda po otočení jména a příjmení (např. Hana Martínková -> Martínková Hana)
+    # 2. Shoda po otočení jména a příjmení (např. "Hana Martínková" -> "Martínková Hana")
     casti = jmeno_std.split()
-    if len(casti) == 2:
+    if len(casti) >= 2:
         otocene = f"{casti[1]} {casti[0]}"
         if otocene in EMAILY_REFERENTI:
             return EMAILY_REFERENTI[otocene]
@@ -63,11 +69,11 @@ def najdi_email_referenta(jmeno_referenta):
 # 2. NAČTENÍ DATA Z .IQY SOUBORU NEBO URL
 # ==========================================
 def nacti_data_z_iqy(iqy_file_path="dotaz.iqy"):
-    """Načte URL z IQY souboru a stáshne aktuální data."""
+    """Načte URL z .iqy souboru a stáhne čerstvá data ze systému."""
     print("📥 Načítám čerstvá data z webového dotazu (.iqy)...")
     
     if not os.path.exists(iqy_file_path):
-        raise FileNotFoundError(f"Soubor '{iqy_file_path}' nebyl nalezen.")
+        raise FileNotFoundError(f"Soubor '{iqy_file_path}' nebyl nalezen v repozitáři.")
 
     with open(iqy_file_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -77,9 +83,12 @@ def nacti_data_z_iqy(iqy_file_path="dotaz.iqy"):
         raise ValueError("V .iqy souboru nebyla nalezena platná URL adresa.")
     
     url = urls[0]
-    response = requests.get(url)
+    print(f"🔗 Připojuji se k systémové URL: {url[:60]}...")
     
-    # Načtení dat do DataFramu
+    response = requests.get(url)
+    response.raise_for_status()
+    
+    # Pokus o načtení Excelu nebo HTML tabulky
     try:
         df = pd.read_excel(io.BytesIO(response.content))
     except Exception:
@@ -92,10 +101,10 @@ def nacti_data_z_iqy(iqy_file_path="dotaz.iqy"):
 # ==========================================
 # 3. FILTRACE MĚSÍCE A KONTROLA ČÍSEL ZAKÁZEK
 # ==========================================
-def zpracuj_a_zkonktroluj_vykaz(df):
+def zpracuj_a_zkonstruuj_vykaz(df):
     today = datetime.date.today()
     
-    # Výpočet předchozího kalendářního měsíce
+    # Výpočet předchozího celého kalendářního měsíce (např. spuštění v listopadu -> vyhodnocuje říjen)
     first_day_curr = today.replace(day=1)
     last_day_prev = first_day_curr - datetime.timedelta(days=1)
     
@@ -105,120 +114,30 @@ def zpracuj_a_zkonktroluj_vykaz(df):
     start_date = datetime.date(target_year, target_month, 1)
     end_date = datetime.date(target_year, target_month, calendar.monthrange(target_year, target_month)[1])
     
-    print(f"🗓️ Vyhodnocuji měsíc: {target_month}/{target_year} ({start_date} až {end_date})")
+    print(f"🗓️ Vyhodnocuji období předchozího měsíce: {target_month}/{target_year} ({start_date} až {end_date})")
     
-    # A) Filtr podle datumu vytvoření
-    df["Datum vytvoření"] = pd.to_datetime(df["Datum vytvoření"], errors='coerce')
-    mask_datum = (df["Datum vytvoření"].dt.date >= start_date) & (df["Datum vytvoření"].dt.date <= end_date)
+    # A) Filtr podle sloupce 'Datum vytvoření'
+    df["Datum_dt"] = pd.to_datetime(df["Datum vytvoření"], errors='coerce')
+    mask_datum = (df["Datum_dt"].dt.date >= start_date) & (df["Datum_dt"].dt.date <= end_date)
     df_mesic = df[mask_datum].copy()
     
     # B) Dynamická kontrola čísla zakázky pro daný měsíc (kód měsíce na 6. a 7. pozici)
-    kod_mesice_str = f"{target_month:02d}"  # Např. "01", "02", ..., "10", "11", "12"
+    kod_mesice_str = f"{target_month:02d}"  # "01", "02", ..., "10", "11", "12"
     df_mesic["Kod_Zakazky"] = df_mesic["Zakázka"].astype(str).str.strip().str[5:7]
     
-    # Povoleny jsou zakázky se standardní řadou "00" NEBO s kódem daného měsíce
+    # Povolené kódy: "00" (standardní řada s nulami) NEBO kód daného měsíce (např. "10" pro říjen)
     platne_kody = ["00", kod_mesice_str]
     mask_platne = df_mesic["Kod_Zakazky"].isin(platne_kody)
     
     df_platne = df_mesic[mask_platne].copy()
     df_vyrazene = df_mesic[~mask_platne].copy()
     
-    print(f"   • Celkem zakázek v měsíci: {len(df_mesic)}")
-    print(f"   • Vyřazeno zakázek z jiných měsíců: {len(df_vyrazene)}")
+    print(f"   • Celkem zakázek v daném měsíci: {len(df_mesic)}")
+    print(f"   • Platné zakázky zařazené do zpracování: {len(df_platne)}")
+    print(f"   • Vyřazeno zakázek s kódem jiného měsíce: {len(df_vyrazene)}")
     
     # C) Detekce chybějících nákladů
     mask_chybi_naklady = (
         df_platne["Náklady"].isna() | 
         (df_platne["Náklady"].astype(str).str.strip() == "") | 
-        (df_platne["Náklady"] == 0)
-    )
-    
-    df_chybi = df_platne[mask_chybi_naklady].copy()
-    print(f"   • Nalezeno zakázek bez nákladů: {len(df_chybi)}")
-    
-    return df_chybi, target_month, target_year
-
-
-# ==========================================
-# 4. ROZESLÁNÍ UPOZORNĚNÍ / UPOMÍNEK REFERENTŮM
-# ==========================================
-def rozeslat_emaily(df_chybi, target_month, target_year):
-    if df_chybi.empty:
-        print("🎉 Všechny zakázky mají doplněné náklady! Žádné e-maily nebyly odeslány.")
-        return
-
-    today = datetime.date.today()
-    
-    # Rozlišení zda jde o první výzvu (5. den) nebo upomínku (7. den a později)
-    je_upominka = today.day >= 7
-    prefix_predmetu = "⚠️ UPOZORNĚNÍ (2. VÝZVA)" if je_upominka else "Upozornění"
-    
-    skupiny = df_chybi.groupby("BD")
-    
-    for referent, zakazky in skupiny:
-        email_prijemce = EMAILY_REFERENTI.get(referent)
-        
-        if not email_prijemce:
-            print(f"⚠️ Varování: Pro referenta '{referent}' nebyla nalezena e-mailová adresa.")
-            continue
-            
-        # Generování HTML tabulky zakázek
-        tabulka_html = zakazky[["Zakázka", "Datum vytvoření", "Název org."]].to_html(index=False)
-        
-        predmet = f"{prefix_predmetu}: Chybějící náklady u zakázek za {target_month}/{target_year}"
-        
-        upozorneni_text = (
-            "<p style='color: red; font-weight: bold;'>Toto je opakovaná výzva! Náklady stále nebyly doplněny.</p>"
-            if je_upominka else ""
-        )
-        
-        html_obsah = f"""
-        <html>
-        <head>
-            <style>
-                table {{ border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }}
-                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-                th {{ background-color: #f2f2f2; font-weight: bold; }}
-            </style>
-        </head>
-        <body>
-            <p>Dobrý den, {referent},</p>
-            {upozorneni_text}
-            <p>při automatické kontrole uzávěrky za <b>{target_month}/{target_year}</b> byly u Vašich zakázek zjištěny <b>chybějící náklady</b>:</p>
-            {tabulka_html}
-            <p>Prosíme o jejich co nejrychlejší doplnění do systému.</p>
-            <br>
-            <p><i>Tato zpráva byla vygenerována automaticky.</i></p>
-        </body>
-        </html>
-        """
-        
-        msg = MIMEMultipart()
-        msg['From'] = SMTP_SENDER
-        msg['To'] = email_prijemce
-        msg['Subject'] = predmet
-        msg.attach(MIMEText(html_obsah, 'html', 'utf-8'))
-        
-        try:
-            port = 587
-            server = smtplib.SMTP(SMTP_SERVER, port)
-            server.starttls()
-            server.login(SMTP_SENDER, SMTP_PASSWORD)
-            server.sendmail(SMTP_SENDER, [email_prijemce], msg.as_string())
-            server.quit()
-            print(f"📧 E-mail doručen pro: {referent} ({email_prijemce})")
-        except Exception as e:
-            print(f"❌ Chyba při odesílání e-mailu pro {referent}: {e}")
-
-
-# ==========================================
-# HLAVNÍ SPUŠTĚNÍ
-# ==========================================
-if __name__ == "__main__":
-    try:
-        df_raw = nacti_data_z_iqy("dotaz.iqy")
-        df_chybi, mesic, rok = zpracuj_a_zkonktroluj_vykaz(df_raw)
-        rozeslat_emaily(df_chybi, mesic, rok)
-        print("🎉 Automatická rutina dokončena.")
-    except Exception as e:
-        print(f"❌ Chyba během automatické rutiny: {e}")
+        (df_platne
