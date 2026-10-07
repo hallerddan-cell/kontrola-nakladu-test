@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 
 st.set_page_config(page_title="TEST: Kontrola Nákladů", layout="wide")
 
-# --- FUNKCE PRO ODESLÁNÍ EMAILU PŘES OUTLOOK ---
+# --- FUNKCE PRO ODESLÁNÍ EMAILU PŘES GMAIL ---
 def odeslat_testovaci_email(muj_email, predmet, html_obsah):
     try:
         sender_email = st.secrets["smtp"]["sender_email"]
@@ -24,6 +24,7 @@ def odeslat_testovaci_email(muj_email, predmet, html_obsah):
     msg.attach(MIMEText(html_obsah, 'html', 'utf-8'))
 
     try:
+        # Připojení k SMTP serveru Gmailu
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(sender_email, sender_password)
@@ -31,7 +32,7 @@ def odeslat_testovaci_email(muj_email, predmet, html_obsah):
         server.quit()
         return True, f"✅ Testovací e-mail úspěšně odeslán na VÁŠ e-mail: {muj_email}"
     except Exception as e:
-        return False, f"❌ Chyba při odesílání: {str(e)}"
+        return False, f"❌ Chyba při odesílání přes Gmail: {str(e)}"
 
 # --- HLAVNÍ APLIKACE ---
 st.title("🧪 TESTOVACÍ MÓD: Kontrola Chybějících Nákladů")
