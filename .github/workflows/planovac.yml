@@ -1,0 +1,31 @@
+name: Automatická Kontrola Nákladů (5. a 7. den v měsíci)
+
+on:
+  schedule:
+    # Běží automaticky 5. a 7. dne v měsíci v 07:00 UTC (8:00 ráno SEČ)
+    - cron: '0 7 5,7 * *'
+  workflow_dispatch: # Umožní spustit kontrolu i ručně jedním kliknutím
+
+jobs:
+  spustit-kontrolu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Načíst kód z repozitáře
+        uses: actions/checkout@v3
+
+      - name: Nastavit Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Instalovat potřebné balíčky
+        run: |
+          pip install pandas openpyxl requests lxml html5lib
+
+      - name: Spustit kontrolu a rozeslat e-maily
+        env:
+          SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_SERVER: "smtp.gmail.com"
+        run: |
+          python automaticka_kontrola.py
