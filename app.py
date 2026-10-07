@@ -14,17 +14,49 @@ from email.mime.text import MIMEText
 # 1. MAPOVÁNÍ E-MAILŮ REFERENTŮ (sloupec BD)
 # ==========================================
 EMAILY_REFERENTI = {
-    "Jandošová Petra": "petra.jandosova@oktours.cz",
-    "Matějková Ivona": "ivona.matejkova@oktours.cz",
-    "Nekola Tomáš": "tomas.nekola@oktours.cz",
-    "Třebický Tomáš": "tomas.trebicky@oktours.cz",
-    # Sem můžete doplnit další referenty podle potřeby
+    "Martínková Hana": "martinkova@oktours.cz",
+    "Okrouhlíková Iva": "okrouhlikova@oktours.cz",
+    "Novohradská Lucie": "lucie.novohradska@nemoletenky.cz",
+    "Tlamichová Rita": "tlamichova@oktours.cz",
+    "Haller Dan": "haller@oktours.cz",
+    "Adamcová Marta": "adamcova@oktours.cz",
+    "Gazdová Pavlína": "gazdova@oktours.cz",
+    "Jandošová Petra": "jandosovap@gmail.com",
+    "Matějková Ivona": "delta.letenky@gmail.com",
+    "Pešatová Helena": "pesatova@oktours.cz",
+    "Třebický Tomáš": "trebicky@oktours.cz",
+    "Nekola Tomáš": "nekola@oktours.cz",
+    "Vidermanova Sabina": "vidermanova@oktours.cz",
+    "Flenerová Helena": "flenerova@oktours.cz",
+    "Chumpitaz Pavlína": "Chumpitaz@oktours.cz",
+    "Zuzánková Nikola": "zuzankova@oktours.cz",
+    "Trimidal Joshua": "Trimidal@oktours.cz"
 }
 
-# Přihlašovací údaje k e-mailu (načítají se bezpečně ze Secrets)
-SMTP_SENDER = os.getenv("SMTP_SENDER")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com") # Nebo smtp.office365.com
+def najdi_email_referenta(jmeno_referenta):
+    """Najde e-mail bez ohledu na pořadí Jméno/Příjmení."""
+    if not jmeno_referenta or pd.isna(jmeno_referenta):
+        return None
+    
+    jmeno_std = str(jmeno_referenta).strip()
+    
+    # 1. Přímá shoda
+    if jmeno_std in EMAILY_REFERENTI:
+        return EMAILY_REFERENTI[jmeno_std]
+        
+    # 2. Shoda po otočení jména a příjmení (např. Hana Martínková -> Martínková Hana)
+    casti = jmeno_std.split()
+    if len(casti) == 2:
+        otocene = f"{casti[1]} {casti[0]}"
+        if otocene in EMAILY_REFERENTI:
+            return EMAILY_REFERENTI[otocene]
+            
+    # 3. Vyhledání podle příjmení
+    for k, v in EMAILY_REFERENTI.items():
+        if casti[0].lower() in k.lower():
+            return v
+            
+    return None
 
 
 # ==========================================
