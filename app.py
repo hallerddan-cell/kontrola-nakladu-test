@@ -13,7 +13,46 @@ from email.mime.text import MIMEText
 st.set_page_config(page_title="BTT: Kontrola a Očištění Zakázek", layout="wide")
 
 # ==========================================
-# MAPOVÁNÍ E-MAILŮ REFERENTŮ
+# 1. AUTOMATICKÉ SJEDNOCENÍ NÁZVŮ SLOUPCŮ
+# ==========================================
+def unifikuj_sloupce(df):
+    """Automaticky přejmenuje různé varianty názvů sloupců na standardní rozhraní."""
+    mapovani = {}
+    
+    # Číslo / Kód zakázky
+    for c in ['Zakázka', 'Kód', 'Číslo zakázky']:
+        if c in df.columns:
+            mapovani[c] = 'Zakázka'
+            break
+            
+    # Datum vytvoření
+    for c in ['Datum vytvoření', 'Datum vytvoř.']:
+        if c in df.columns:
+            mapovani[c] = 'Datum vytvoření'
+            break
+            
+    # Referent / BD
+    for c in ['BD', 'Referent', 'Jméno referenta']:
+        if c in df.columns:
+            mapovani[c] = 'BD'
+            break
+            
+    # Náklady
+    for c in ['Náklady', 'Náklad']:
+        if c in df.columns:
+            mapovani[c] = 'Náklady'
+            break
+
+    # Název org.
+    for c in ['Název org.', 'Název org', 'Organizace', 'Klient']:
+        if c in df.columns:
+            mapovani[c] = 'Název org.'
+            break
+
+    return df.rename(columns=mapovani)
+
+# ==========================================
+# 2. MAPOVÁNÍ E-MAILŮ REFERENTŮ
 # ==========================================
 EMAILY_REFERENTI = {
     "Martínková Hana": "martinkova@oktours.cz",
@@ -64,11 +103,10 @@ def nacisti_iqy_obsah(file_bytes_or_str):
         return pd.read_html(io.BytesIO(res.content))[0]
 
 # ==========================================
-# HLAVNÍ WEBOVÉ ROZHRANÍ
+# 3. HLAVNÍ WEBOVÉ ROZHRANÍ
 # ==========================================
 st.title("📊 BTT: Kontrola a Očištění Zakázek")
 
-# Výběr zdroje dat
 zdroj = st.radio(
     "Vyberte zdroj dat:", 
     ["Nahrajte ostrý soubor (.iqy nebo .xlsx)", "Použít soubor 'dotaz.iqy' z repozitáře", "Použít fiktivní testovací data (test_data.csv)"],
@@ -105,6 +143,9 @@ else:
         st.error(f"Chyba při načítání test_data.csv: {e}")
 
 if df is not None:
+    # Aplikujeme automatické sjednocení názvů sloupců
+    df = unifikuj_sloupce(df)
+
     st.divider()
     st.subheader("1. Nastavení vyhodnocovaného období")
     
@@ -123,7 +164,6 @@ if df is not None:
     col_naklady = "Náklady"
     col_referent = "BD"
 
-    # Kontrola přítomnosti sloupců
     potrebne = [col_datum, col_zakazka, col_naklady, col_referent]
     chybi_cols = [c for c in potrebne if c not in df.columns]
 
@@ -131,7 +171,7 @@ if df is not None:
         st.error(f"V souboru chybí tyto požadované sloupce: {chybi_cols}")
         st.info(f"Dostupné sloupce v souboru: {list(df.columns)}")
     else:
-        # A) Časový filtr
+        # Časový filtr
         start_date = datetime.date(vybrany_rok, vybrany_mesic, 1)
         end_date = datetime.date(vybrany_rok, vybrany_mesic, calendar.monthrange(vybrany_rok, vybrany_mesic)[1])
 
@@ -139,7 +179,7 @@ if df is not None:
         mask_datum = (df["Datum_dt"].dt.date >= start_date) & (df["Datum_dt"].dt.date <= end_date)
         df_mesic = df[mask_datum].copy()
 
-        # B) Filtr číselné řady (kód "00" + kód daného měsíce)
+        # Filtr číselné řady (kód "00" + kód daného měsíce)
         kod_mesice_str = f"{vybrany_mesic:02d}"
         df_mesic["Kod_Zakazky"] = df_mesic[col_zakazka].astype(str).str.strip().str[5:7]
 
@@ -149,7 +189,7 @@ if df is not None:
         df_ocistene = df_mesic[mask_platne].copy()
         df_vyrazene = df_mesic[~mask_platne].copy()
 
-        # C) Označení stavu nákladů
+        # Označení stavu nákladů
         mask_chybi = (
             df_ocistene[col_naklady].isna() | 
             (df_ocistene[col_naklady].astype(str).str.strip() == "") | 
@@ -162,7 +202,6 @@ if df is not None:
 
         df_chybi = df_ocistene[mask_chybi].copy()
 
-        # Zobrazení metrik
         st.divider()
         st.subheader(f"📊 Výsledky pro {vybrany_mesic}/{vybrany_rok}")
 
@@ -175,10 +214,8 @@ if df is not None:
             with st.expander("ℹ️ Zobrazit vyřazené zakázky z jiných měsíců"):
                 st.dataframe(df_vyrazene[[col_zakazka, col_datum, col_referent, "Kod_Zakazky"]], use_container_width=True)
 
-        # Náhled očištěné tabulky
         st.subheader("📋 Očištěná data pro daný měsíc (se stavem nákladů)")
         
-        # Zobrazení se zvýrazněným stavem nákladů
         zobrazit_cols = [col_zakazka, col_datum, col_referent, "Název org.", col_naklady, "Stav nákladů"]
         dostupne_zobrazit = [c for c in zobrazit_cols if c in df_ocistene.columns]
         
@@ -190,7 +227,6 @@ if df is not None:
         
         col_d1, col_d2 = st.columns(2)
         
-        # 1. Stažení všech očištěných zakázek
         out_all = io.BytesIO()
         with pd.ExcelWriter(out_all, engine='openpyxl') as writer:
             df_ocistene[dostupne_zobrazit].to_excel(writer, index=False, sheet_name=f"Ocistene_{vybrany_mesic}_{vybrany_rok}")
@@ -203,7 +239,6 @@ if df is not None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-        # 2. Stažení pouze zakázek bez nákladů
         if not df_chybi.empty:
             out_chybi = io.BytesIO()
             with pd.ExcelWriter(out_chybi, engine='openpyxl') as writer:
@@ -229,7 +264,6 @@ if df is not None:
                 st.success("Všechny zakázky mají vyplněné náklady, e-maily není potřeba odesílat.")
             else:
                 st.info("Odesílám upozornění...")
-                # Použití nastavení ze Secrets
                 try:
                     sender = st.secrets["smtp"]["sender_email"]
                     pwd = st.secrets["smtp"]["password"]
