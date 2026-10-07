@@ -24,7 +24,7 @@ def odeslat_testovaci_email(muj_email, predmet, html_obsah):
     msg.attach(MIMEText(html_obsah, 'html', 'utf-8'))
 
     try:
-        server = smtplib.SMTP('smtp.office365.com', 587)
+        server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, [muj_email], msg.as_string())
