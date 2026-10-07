@@ -16,7 +16,7 @@ st.set_page_config(page_title="BTT: Kontrola a Očištění Zakázek", layout="w
 # 1. AUTOMATICKÉ SJEDNOCENÍ NÁZVŮ SLOUPCŮ
 # ==========================================
 def unifikuj_sloupce(df):
-    """Automaticky přejmenuje různé varianty názvů sloupců na standardní rozhraní."""
+    """Sjednotí klíčové názvy sloupců a ponechá všechny ostatní sloupce nedotčené."""
     mapovani = {}
     
     # Číslo / Kód zakázky
@@ -143,7 +143,7 @@ else:
         st.error(f"Chyba při načítání test_data.csv: {e}")
 
 if df is not None:
-    # Aplikujeme automatické sjednocení názvů sloupců
+    # Aplikujeme automatické sjednocení názvů klíčových sloupců
     df = unifikuj_sloupce(df)
 
     st.divider()
@@ -200,7 +200,9 @@ if df is not None:
         df_ocistene["Stav nákladů"] = np.where(mask_chybi, "❌ Chybí náklad", "✅ V pořádku")
         df_ocistene["Datum vytvoření"] = df_ocistene["Datum_dt"].dt.strftime('%d.%m.%Y')
 
-        df_chybi = df_ocistene[mask_chybi].copy()
+        # Odstranění pomocných sloupců před exportem, aby data byla čistá
+        df_export_ocistene = df_ocistene.drop(columns=["Datum_dt", "Kod_Zakazky"], errors="ignore")
+        df_chybi = df_export_ocistene[mask_chybi].copy()
 
         st.divider()
         st.subheader(f"📊 Výsledky pro {vybrany_mesic}/{vybrany_rok}")
@@ -214,41 +216,39 @@ if df is not None:
             with st.expander("ℹ️ Zobrazit vyřazené zakázky z jiných měsíců"):
                 st.dataframe(df_vyrazene[[col_zakazka, col_datum, col_referent, "Kod_Zakazky"]], use_container_width=True)
 
-        st.subheader("📋 Očištěná data pro daný měsíc (se stavem nákladů)")
-        
-        zobrazit_cols = [col_zakazka, col_datum, col_referent, "Název org.", col_naklady, "Stav nákladů"]
-        dostupne_zobrazit = [c for c in zobrazit_cols if c in df_ocistene.columns]
-        
-        st.dataframe(df_ocistene[dostupne_zobrazit], use_container_width=True)
+        st.subheader("📋 Očištěná data (Kompletní tabulka se všemi sloupci)")
+        st.dataframe(df_export_ocistene, use_container_width=True)
 
-        # STAŽENÍ SOUBORŮ EXCEL
+        # STAŽENÍ SOUBORŮ EXCEL (VŠECHNY SLOUPCE)
         st.divider()
         st.subheader("📥 Stažení výstupů v Excelu")
         
         col_d1, col_d2 = st.columns(2)
         
+        # 1. Stažení VŠECH očištěných zakázek v PLNOU ŠÍŘI sloupců
         out_all = io.BytesIO()
         with pd.ExcelWriter(out_all, engine='openpyxl') as writer:
-            df_ocistene[dostupne_zobrazit].to_excel(writer, index=False, sheet_name=f"Ocistene_{vybrany_mesic}_{vybrany_rok}")
+            df_export_ocistene.to_excel(writer, index=False, sheet_name=f"Ocistene_{vybrany_mesic}_{vybrany_rok}")
         
         with col_d1:
             st.download_button(
                 label="🟢 Stáhnout VŠECHNY očištěné zakázky (.xlsx)",
                 data=out_all.getvalue(),
-                file_name=f"BTT_Ocistena_Data_{vybrany_mesic}_{vybrany_rok}.xlsx",
+                file_name=f"BTT_Ocistena_Data_Komplet_{vybrany_mesic}_{vybrany_rok}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+        # 2. Stažení POUZE zakázek bez nákladů v PLNOU ŠÍŘI sloupců
         if not df_chybi.empty:
             out_chybi = io.BytesIO()
             with pd.ExcelWriter(out_chybi, engine='openpyxl') as writer:
-                df_chybi[dostupne_zobrazit].to_excel(writer, index=False, sheet_name="Chybejici_naklady")
+                df_chybi.to_excel(writer, index=False, sheet_name="Chybejici_naklady")
             
             with col_d2:
                 st.download_button(
                     label="🔴 Stáhnout POUZE zakázky CHYBĚJÍCÍ NÁKLAD (.xlsx)",
                     data=out_chybi.getvalue(),
-                    file_name=f"BTT_Chybejici_Naklady_{vybrany_mesic}_{vybrany_rok}.xlsx",
+                    file_name=f"BTT_Chybejici_Naklady_Komplet_{vybrany_mesic}_{vybrany_rok}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
