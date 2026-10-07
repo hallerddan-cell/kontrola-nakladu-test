@@ -1,136 +1,192 @@
-import streamlit as st
 import pandas as pd
+import numpy as np
 import datetime
 import calendar
-import io
+import re
+import requests
 import smtplib
+import io
+import os
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-st.set_page_config(page_title="TEST: Kontrola Nákladů", layout="wide")
+# ==========================================
+# 1. MAPOVÁNÍ E-MAILŮ REFERENTŮ (sloupec BD)
+# ==========================================
+EMAILY_REFERENTI = {
+    "Jandošová Petra": "petra.jandosova@oktours.cz",
+    "Matějková Ivona": "ivona.matejkova@oktours.cz",
+    "Nekola Tomáš": "tomas.nekola@oktours.cz",
+    "Třebický Tomáš": "tomas.trebicky@oktours.cz",
+    # Sem můžete doplnit další referenty podle potřeby
+}
 
-# --- FUNKCE PRO ODESLÁNÍ EMAILU PŘES GMAIL ---
-def odeslat_testovaci_email(muj_email, predmet, html_obsah):
-    try:
-        sender_email = st.secrets["smtp"]["sender_email"]
-        sender_password = st.secrets["smtp"]["password"]
-    except Exception:
-        return False, "Chybí nastavení SMTP v Secrets (sender_email a password)."
+# Přihlašovací údaje k e-mailu (načítají se bezpečně ze Secrets)
+SMTP_SENDER = os.getenv("SMTP_SENDER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com") # Nebo smtp.office365.com
 
-    msg = MIMEMultipart()
-    msg['From'] = sender_email
-    msg['To'] = muj_email
-    msg['Subject'] = f"[TEST] {predmet}"
-    msg.attach(MIMEText(html_obsah, 'html', 'utf-8'))
 
-    try:
-        # Připojení k SMTP serveru Gmailu
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.sendmail(sender_email, [muj_email], msg.as_string())
-        server.quit()
-        return True, f"✅ Testovací e-mail úspěšně odeslán na VÁŠ e-mail: {muj_email}"
-    except Exception as e:
-        return False, f"❌ Chyba při odesílání přes Gmail: {str(e)}"
-
-# --- HLAVNÍ APLIKACE ---
-st.title("🧪 TESTOVACÍ MÓD: Kontrola Chybějících Nákladů")
-st.info("Všechny e-maily v tomto testovacím režimu odcházejí VÝHRADNĚ na váš zadaný e-mail!")
-
-# Volba zdroje dat
-zdroj_dat = st.radio("Vyberte zdroj dat pro test:", ["Použít fiktivní testovací data (test_data.csv)", "Nahrát vlastní Excel (.xlsx)"])
-
-if zdroj_dat == "Použít fiktivní testovací data (test_data.csv)":
-    try:
-        df = pd.read_csv("test_data.csv")
-        st.success("Načtena fiktivní testovací data.")
-    except Exception as e:
-        st.error(f"Chyba při načítání test_data.csv: {e}")
-        df = None
-else:
-    uploaded_file = st.file_uploader("Nahrajte testovací Excel", type=["xlsx"])
-    if uploaded_file is not None:
-        df = pd.read_excel(uploaded_file)
-        st.success("Excel byl úspěšně nahrán.")
-    else:
-        df = None
-
-if df is not None:
-    st.divider()
-    st.subheader("1. Výběr kontrolovaného měsíce")
+# ==========================================
+# 2. NAČTENÍ DATA Z .IQY SOUBORU NEBO URL
+# ==========================================
+def nacti_data_z_iqy(iqy_file_path="dotaz.iqy"):
+    """Načte URL z IQY souboru a stáshne aktuální data."""
+    print("📥 Načítám čerstvá data z webového dotazu (.iqy)...")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        vybrany_rok = st.number_input("Rok", min_value=2020, max_value=2030, value=2026)
-    with col2:
-        vybrany_mesic = st.selectbox("Měsíc", options=list(range(1, 13)), index=8, format_func=lambda m: f"{m}. měsíc (Září)")
+    if not os.path.exists(iqy_file_path):
+        raise FileNotFoundError(f"Soubor '{iqy_file_path}' nebyl nalezen.")
 
-    col_datum = "Datum vytvoření"
-    col_zakazka = "Zakázka"
-    col_naklady = "Náklady"
-    col_referent = "BD"
+    with open(iqy_file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    urls = re.findall(r'https?://[^\s]+', content)
+    if not urls:
+        raise ValueError("V .iqy souboru nebyla nalezena platná URL adresa.")
+    
+    url = urls[0]
+    response = requests.get(url)
+    
+    # Načtení dat do DataFramu
+    try:
+        df = pd.read_excel(io.BytesIO(response.content))
+    except Exception:
+        df = pd.read_html(io.BytesIO(response.content))[0]
+        
+    print(f"✅ Data úspěšně načtena ({len(df)} řádků).")
+    return df
 
-    # Kontrola měsíce
-    start_date = datetime.date(vybrany_rok, vybrany_mesic, 1)
-    end_date = datetime.date(vybrany_rok, vybrany_mesic, calendar.monthrange(vybrany_rok, vybrany_mesic)[1])
 
-    df[col_datum] = pd.to_datetime(df[col_datum], errors='coerce')
-    mask_datum = (df[col_datum].dt.date >= start_date) & (df[col_datum].dt.date <= end_date)
+# ==========================================
+# 3. FILTRACE MĚSÍCE A KONTROLA ČÍSEL ZAKÁZEK
+# ==========================================
+def zpracuj_a_zkonktroluj_vykaz(df):
+    today = datetime.date.today()
+    
+    # Výpočet předchozího kalendářního měsíce
+    first_day_curr = today.replace(day=1)
+    last_day_prev = first_day_curr - datetime.timedelta(days=1)
+    
+    target_year = last_day_prev.year
+    target_month = last_day_prev.month  # 1 až 12
+    
+    start_date = datetime.date(target_year, target_month, 1)
+    end_date = datetime.date(target_year, target_month, calendar.monthrange(target_year, target_month)[1])
+    
+    print(f"🗓️ Vyhodnocuji měsíc: {target_month}/{target_year} ({start_date} až {end_date})")
+    
+    # A) Filtr podle datumu vytvoření
+    df["Datum vytvoření"] = pd.to_datetime(df["Datum vytvoření"], errors='coerce')
+    mask_datum = (df["Datum vytvoření"].dt.date >= start_date) & (df["Datum vytvoření"].dt.date <= end_date)
     df_mesic = df[mask_datum].copy()
-
-    # Kontrola čísel zakázek (kód měsíce na 6. a 7. pozici)
-    kod_mesice_str = f"{vybrany_mesic:02d}"
-    df_mesic["Kod_Zakazky"] = df_mesic[col_zakazka].astype(str).str.strip().str[5:7]
-
+    
+    # B) Dynamická kontrola čísla zakázky pro daný měsíc (kód měsíce na 6. a 7. pozici)
+    kod_mesice_str = f"{target_month:02d}"  # Např. "01", "02", ..., "10", "11", "12"
+    df_mesic["Kod_Zakazky"] = df_mesic["Zakázka"].astype(str).str.strip().str[5:7]
+    
+    # Povoleny jsou zakázky se standardní řadou "00" NEBO s kódem daného měsíce
     platne_kody = ["00", kod_mesice_str]
     mask_platne = df_mesic["Kod_Zakazky"].isin(platne_kody)
-
+    
     df_platne = df_mesic[mask_platne].copy()
     df_vyrazene = df_mesic[~mask_platne].copy()
-
-    # Kontrola chybějících nákladů
-    mask_chybi = (
-        df_platne[col_naklady].isna() | 
-        (df_platne[col_naklady].astype(str).str.strip() == "") | 
-        (df_platne[col_naklady] == 0)
+    
+    print(f"   • Celkem zakázek v měsíci: {len(df_mesic)}")
+    print(f"   • Vyřazeno zakázek z jiných měsíců: {len(df_vyrazene)}")
+    
+    # C) Detekce chybějících nákladů
+    mask_chybi_naklady = (
+        df_platne["Náklady"].isna() | 
+        (df_platne["Náklady"].astype(str).str.strip() == "") | 
+        (df_platne["Náklady"] == 0)
     )
-    df_chybi = df_platne[mask_chybi].copy()
+    
+    df_chybi = df_platne[mask_chybi_naklady].copy()
+    print(f"   • Nalezeno zakázek bez nákladů: {len(df_chybi)}")
+    
+    return df_chybi, target_month, target_year
 
-    st.divider()
-    st.subheader("📊 Výsledky testovací kontroly")
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Načtené zakázky pro měsíc", len(df_mesic))
-    m2.metric("Vyřazené zakázky (kód jiného měsíce)", len(df_vyrazene))
-    m3.metric("⚠️ Nalezeno zakázek CHYBĚJÍCÍ NÁKLAD", len(df_chybi))
+# ==========================================
+# 4. ROZESLÁNÍ UPOZORNĚNÍ / UPOMÍNEK REFERENTŮM
+# ==========================================
+def rozeslat_emaily(df_chybi, target_month, target_year):
+    if df_chybi.empty:
+        print("🎉 Všechny zakázky mají doplněné náklady! Žádné e-maily nebyly odeslány.")
+        return
 
-    if not df_vyrazene.empty:
-        with st.expander("ℹ️ Správně vyřazená zakázka (nepatří do tohoto měsíce)"):
-            st.dataframe(df_vyrazene[[col_zakazka, col_datum, col_referent, "Kod_Zakazky"]], use_container_width=True)
-
-    if not df_chybi.empty:
-        st.warning("Zakázky vyžadující doplnění nákladů:")
-        st.dataframe(df_chybi[[col_zakazka, col_datum, col_referent, col_naklady]], use_container_width=True)
-
-        st.divider()
-        st.subheader("📧 Testovací odeslání e-mailového výkazu")
+    today = datetime.date.today()
+    
+    # Rozlišení zda jde o první výzvu (5. den) nebo upomínku (7. den a později)
+    je_upominka = today.day >= 7
+    prefix_predmetu = "⚠️ UPOZORNĚNÍ (2. VÝZVA)" if je_upominka else "Upozornění"
+    
+    skupiny = df_chybi.groupby("BD")
+    
+    for referent, zakazky in skupiny:
+        email_prijemce = EMAILY_REFERENTI.get(referent)
         
-        muj_osobni_email = st.text_input("Zadejte VÁŠ e-mail pro doručení testovacího výkazu:", "vás.email@firma.cz")
-        
-        if st.button("🚀 Odeslat testovací výkaz na MŮJ e-mail"):
-            # Vytvoření souhrnu pro všechny referenty
-            html_obsah = f"<h2>[TEST] Přehled chybějících nákladů za {vybrany_mesic}/{vybrany_rok}</h2>"
-            html_obsah += "<p>Tato zpráva je testovací a simuluje e-maily, které dostanou jednotliví referenti.</p>"
+        if not email_prijemce:
+            print(f"⚠️ Varování: Pro referenta '{referent}' nebyla nalezena e-mailová adresa.")
+            continue
             
-            skupiny = df_chybi.groupby(col_referent)
-            for referent, zakazky in skupiny:
-                html_obsah += f"<h3>Referent: {referent}</h3>"
-                html_obsah += zakazky[[col_zakazka, col_datum, "Název org."]].to_html(index=False)
-                html_obsah += "<hr>"
+        # Generování HTML tabulky zakázek
+        tabulka_html = zakazky[["Zakázka", "Datum vytvoření", "Název org."]].to_html(index=False)
+        
+        predmet = f"{prefix_predmetu}: Chybějící náklady u zakázek za {target_month}/{target_year}"
+        
+        upozorneni_text = (
+            "<p style='color: red; font-weight: bold;'>Toto je opakovaná výzva! Náklady stále nebyly doplněny.</p>"
+            if je_upominka else ""
+        )
+        
+        html_obsah = f"""
+        <html>
+        <head>
+            <style>
+                table {{ border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #f2f2f2; font-weight: bold; }}
+            </style>
+        </head>
+        <body>
+            <p>Dobrý den, {referent},</p>
+            {upozorneni_text}
+            <p>při automatické kontrole uzávěrky za <b>{target_month}/{target_year}</b> byly u Vašich zakázek zjištěny <b>chybějící náklady</b>:</p>
+            {tabulka_html}
+            <p>Prosíme o jejich co nejrychlejší doplnění do systému.</p>
+            <br>
+            <p><i>Tato zpráva byla vygenerována automaticky.</i></p>
+        </body>
+        </html>
+        """
+        
+        msg = MIMEMultipart()
+        msg['From'] = SMTP_SENDER
+        msg['To'] = email_prijemce
+        msg['Subject'] = predmet
+        msg.attach(MIMEText(html_obsah, 'html', 'utf-8'))
+        
+        try:
+            port = 587
+            server = smtplib.SMTP(SMTP_SERVER, port)
+            server.starttls()
+            server.login(SMTP_SENDER, SMTP_PASSWORD)
+            server.sendmail(SMTP_SENDER, [email_prijemce], msg.as_string())
+            server.quit()
+            print(f"📧 E-mail doručen pro: {referent} ({email_prijemce})")
+        except Exception as e:
+            print(f"❌ Chyba při odesílání e-mailu pro {referent}: {e}")
 
-            uspech, sprava = odeslat_testovaci_email(muj_osobni_email, f"Testovací výkaz chybějících nákladů {vybrany_mesic}/{vybrany_rok}", html_obsah)
-            if uspech:
-                st.success(sprava)
-            else:
-                st.error(sprava)
+
+# ==========================================
+# HLAVNÍ SPUŠTĚNÍ
+# ==========================================
+if __name__ == "__main__":
+    try:
+        df_raw = nacti_data_z_iqy("dotaz.iqy")
+        df_chybi, mesic, rok = zpracuj_a_zkonktroluj_vykaz(df_raw)
+        rozeslat_emaily(df_chybi, mesic, rok)
+        print("🎉 Automatická rutina dokončena.")
+    except Exception as e:
+        print(f"❌ Chyba během automatické rutiny: {e}")
