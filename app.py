@@ -31,7 +31,7 @@ def unifikuj_sloupce(df):
             mapovani[c] = 'Datum vytvoření'
             break
             
-    # Referent / BD - upřednostníme 'Jméno referenta', aby se párovaly e-maily správně
+    # Referent / BD - upřednostníme 'Jméno referenta'
     for c in ['BD', 'Jméno referenta', 'Referent']:
         if c in df.columns:
             mapovani[c] = 'BD'
@@ -166,10 +166,10 @@ if df is not None:
 
     col_datum = "Datum vytvoření"
     col_zakazka = "Zakázka"
-    col_nakklady = "Náklady"
+    col_naklady = "Náklady"
     col_referent = "BD"
 
-    potrebne = [col_datum, col_zakazka, col_nakklady, col_referent]
+    potrebne = [col_datum, col_zakazka, col_naklady, col_referent]
     chybi_cols = [c for c in potrebne if c not in df.columns]
 
     if chybi_cols:
