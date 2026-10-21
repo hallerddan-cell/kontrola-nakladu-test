@@ -285,7 +285,12 @@ if df is not None:
                             st.warning(f"Chybí e-mail pro: {referent}")
                             continue
 
-                        tab_html = zakazky[[col_zakazka, col_datum, "Název org."]].to_html(index=False)
+                        # Definujeme požadované sloupce do e-mailu (pokud v DataFrame existují)
+                        zaznamy_email = []
+                        mozi_sloupce = [col_zakazka, "Název org.", "Služba", "Cestující", "Začátek cesty", "Konec cesty"]
+                        dostupne_sloupce_email = [c for c in mozi_sloupce if c in zakazky.columns]
+
+                        tab_html = zakazky[dostupne_sloupce_email].to_html(index=False)
                         msg_body = f"<h2>Upozornění: Chybějící náklady za {vybrany_mesic}/{vybrany_rok}</h2>"
                         msg_body += f"<p>Dobrý den, {referent}, u následujících zakázek chybí náklady:</p>{tab_html}"
 
