@@ -166,10 +166,10 @@ if df is not None:
 
     col_datum = "Datum vytvoření"
     col_zakazka = "Zakázka"
-    col_naklady = "Náklady"
+    col_nakklady = "Náklady"
     col_referent = "BD"
 
-    potrebne = [col_datum, col_zakazka, col_naklady, col_referent]
+    potrebne = [col_datum, col_zakazka, col_nakklady, col_referent]
     chybi_cols = [c for c in potrebne if c not in df.columns]
 
     if chybi_cols:
@@ -195,10 +195,10 @@ if df is not None:
         col_sluzba = "Služba" if "Služba" in df_ocistene.columns else None
 
         mask_chybi_zaklad = (
-            df_ocistene[col_naklady].isna() | 
-            (df_ocistene[col_naklady].astype(str).str.strip() == "") | 
-            (df_ocistene[col_naklady].astype(str).str.strip() == "0") |
-            (df_ocistene[col_naklady] == 0)
+            df_ocistene[col_nakklady].isna() | 
+            (df_ocistene[col_nakklady].astype(str).str.strip() == "") | 
+            (df_ocistene[col_nakklady].astype(str).str.strip() == "0") |
+            (df_ocistene[col_nakklady] == 0)
         )
 
         if col_sluzba:
@@ -260,52 +260,4 @@ if df is not None:
 
         st.divider()
         st.subheader("📧 Volitelné odeslání e-mailů referentům")
-        st.caption("E-maily odcházejí pouze po stisknutí tlačítka níže.")
-
-        muj_email = st.text_input("Zadejte e-mail pro testovací doručení (nebo nechte prázdné pro rozeslání referentům)", "")
-
-        if st.button("🚀 Odeslat e-mailová upozornění"):
-            if df_chybi.empty:
-                st.success("Všechny zakázky mají vyplněné náklady, e-maily není potřeba odesílat.")
-            else:
-                st.info("Odesílám upozornění...")
-                try:
-                    sender = st.secrets["smtp"]["sender_email"]
-                    pwd = st.secrets["smtp"]["password"]
-                    server_name = st.secrets["smtp"].get("server", "smtp.gmail.com")
-                except Exception:
-                    st.error("Chybí nastavení SMTP v Secrets!")
-                    sender = None
-
-                if sender:
-                    skupiny = df_chybi.groupby(col_referent)
-                    for referent, zakazky in skupiny:
-                        prijemce = muj_email if muj_email.strip() else najdi_email_referenta(referent)
-                        if not prijemce:
-                            st.warning(f"Chybí e-mail pro: {referent}")
-                            continue
-
-                        # Definujeme požadované sloupce do e-mailu (pokud v DataFrame existují)
-                        zaznamy_email = []
-                        mozi_sloupce = [col_zakazka, "Název org.", "Služba", "Cestující", "Začátek cesty", "Konec cesty"]
-                        dostupne_sloupce_email = [c for c in mozi_sloupce if c in zakazky.columns]
-
-                        tab_html = zakazky[dostupne_sloupce_email].to_html(index=False)
-                        msg_body = f"<h2>Upozornění: Chybějící náklady za {vybrany_mesic}/{vybrany_rok}</h2>"
-                        msg_body += f"<p>Dobrý den, {referent}, u následujících zakázek chybí náklady:</p>{tab_html}"
-
-                        msg = MIMEMultipart()
-                        msg['From'] = sender
-                        msg['To'] = prijemce
-                        msg['Subject'] = f"Upozornění: Chybějící náklady za {vybrany_mesic}/{vybrany_rok}"
-                        msg.attach(MIMEText(msg_body, 'html', 'utf-8'))
-
-                        try:
-                            s = smtplib.SMTP(server_name, 587)
-                            s.starttls()
-                            s.login(sender, pwd)
-                            s.sendmail(sender, [prijemce], msg.as_string())
-                            s.quit()
-                            st.success(f"E-mail doručen na: {prijemce} ({referent})")
-                        except Exception as ex:
-                            st.error(f"Chyba při odesílání pro {referent}: {ex}")
+        st.caption("E-maily odcházej
