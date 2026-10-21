@@ -63,7 +63,6 @@ def unifikuj_sloupce(df):
 EMAILY_REFERENTI = {
     "Martínková Hana": "martinkova@oktours.cz",
     "Okrouhlíková Iva": "okrouhlikova@oktours.cz",
-    "Novohradská Lucie": "lucie.novohradska@nemoletenky.cz",
     "Tlamichová Rita": "tlamichova@oktours.cz",
     "Haller Dan": "haller@oktours.cz",
     "Adamcová Marta": "adamcova@oktours.cz",
@@ -77,7 +76,8 @@ EMAILY_REFERENTI = {
     "Flenerová Helena": "flenerova@oktours.cz",
     "Chumpitaz Pavlína": "Chumpitaz@oktours.cz",
     "Zuzánková Nikola": "zuzankova@oktours.cz",
-    "Trimidal Joshua": "Trimidal@oktours.cz"
+    "Trimidal Joshua": "Trimidal@oktours.cz",
+    "Hrubá Ludmila": "hruba@oktours.cz"
 }
 
 def najdi_email_referenta(jmeno_referenta):
@@ -166,10 +166,10 @@ if df is not None:
 
     col_datum = "Datum vytvoření"
     col_zakazka = "Zakázka"
-    col_nakklady = "Náklady"
+    col_naklady = "Náklady"
     col_referent = "BD"
 
-    potrebne = [col_datum, col_zakazka, col_nakklady, col_referent]
+    potrebne = [col_datum, col_zakazka, col_naklady, col_referent]
     chybi_cols = [c for c in potrebne if c not in df.columns]
 
     if chybi_cols:
@@ -195,7 +195,7 @@ if df is not None:
         col_sluzba = "Služba" if "Služba" in df_ocistene.columns else None
 
         mask_chybi_zaklad = (
-            df_ocistene[col_nakklady].isna() | 
+            df_ocistene[col_naklady].isna() | 
             (df_ocistene[col_nakklady].astype(str).str.strip() == "") | 
             (df_ocistene[col_nakklady].astype(str).str.strip() == "0") |
             (df_ocistene[col_nakklady] == 0)
@@ -285,7 +285,7 @@ if df is not None:
                             st.warning(f"Chybí e-mail pro: {referent}")
                             continue
 
-                        # Požadované sloupce do e-mailu (Název org. nahrazen Návem poskytovatele)
+                        # Požadované sloupce do e-mailu (včetně názvu poskytovatele, bez názvu org.)
                         mozi_sloupce = [col_zakazka, "Název poskytovatele", "Služba", "Cestující", "Začátek cesty", "Konec cesty"]
                         dostupne_sloupce_email = [c for c in mozi_sloupce if c in zakazky.columns]
 
