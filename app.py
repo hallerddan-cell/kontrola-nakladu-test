@@ -260,4 +260,51 @@ if df is not None:
 
         st.divider()
         st.subheader("📧 Volitelné odeslání e-mailů referentům")
-        st.caption("E-maily odcházej
+        st.caption("E-maily odcházejí pouze po stisknutí tlačítka níže.")
+
+        muj_email = st.text_input("Zadejte e-mail pro testovací doručení (nebo nechte prázdné pro rozeslání referentům)", "")
+
+        if st.button("🚀 Odeslat e-mailová upozornění"):
+            if df_chybi.empty:
+                st.success("Všechny zakázky mají vyplněné náklady, e-maily není potřeba odesílat.")
+            else:
+                st.info("Odesílám upozornění...")
+                try:
+                    sender = st.secrets["smtp"]["sender_email"]
+                    pwd = st.secrets["smtp"]["password"]
+                    server_name = st.secrets["smtp"].get("server", "smtp.gmail.com")
+                except Exception:
+                    st.error("Chybí nastavení SMTP v Secrets!")
+                    sender = None
+
+                if sender:
+                    skupiny = df_chybi.groupby(col_referent)
+                    for referent, zakazky in skupiny:
+                        prijemce = muj_email if muj_email.strip() else najdi_email_referenta(referent)
+                        if not prijemce:
+                            st.warning(f"Chybí e-mail pro: {referent}")
+                            continue
+
+                        # Požadované sloupce do e-mailu (Název org. nahrazen Návem poskytovatele)
+                        mozi_sloupce = [col_zakazka, "Název poskytovatele", "Služba", "Cestující", "Začátek cesty", "Konec cesty"]
+                        dostupne_sloupce_email = [c for c in mozi_sloupce if c in zakazky.columns]
+
+                        tab_html = zakazky[dostupne_sloupce_email].to_html(index=False)
+                        msg_body = f"<h2>Upozornění: Chybějící náklady za {vybrany_mesic}/{vybrany_rok}</h2>"
+                        msg_body += f"<p>Dobrý den, {referent}, u následujících zakázek chybí náklady:</p>{tab_html}"
+
+                        msg = MIMEMultipart()
+                        msg['From'] = sender
+                        msg['To'] = prijemce
+                        msg['Subject'] = f"Upozornění: Chybějící náklady za {vybrany_mesic}/{vybrany_rok}"
+                        msg.attach(MIMEText(msg_body, 'html', 'utf-8'))
+
+                        try:
+                            s = smtplib.SMTP(server_name, 587)
+                            s.starttls()
+                            s.login(sender, pwd)
+                            s.sendmail(sender, [prijemce], msg.as_string())
+                            s.quit()
+                            st.success(f"E-mail doručen na: {prijemce} ({referent})")
+                        except Exception as ex:
+                            st.error(f"Chyba při odesílání pro {referent}: {ex}")
