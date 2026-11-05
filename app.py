@@ -151,6 +151,12 @@ else:
 if df is not None:
     df = unifikuj_sloupce(df)
 
+    # Definice klíčových sloupců
+    col_datum = "Datum vytvoření"
+    col_zakazka = "Zakázka"
+    col_nakklady = "Náklady"
+    col_referent = "BD"
+
     st.divider()
     st.subheader("1. Nastavení vyhodnocovaného období")
     
@@ -164,12 +170,7 @@ if df is not None:
     with col2:
         vybrany_mesic = st.selectbox("Měsíc", options=list(range(1, 13)), index=prev_month_date.month - 1, format_func=lambda m: f"{m}. měsíc")
 
-    col_datum = "Datum vytvoření"
-    col_zakazka = "Zakázka"
-    col_naklady = "Náklady"
-    col_referent = "BD"
-
-    potrebne = [col_datum, col_zakazka, col_naklady, col_referent]
+    potrebne = [col_datum, col_zakazka, col_nakklady, col_referent]
     chybi_cols = [c for c in potrebne if c not in df.columns]
 
     if chybi_cols:
@@ -194,21 +195,58 @@ if df is not None:
 
         col_sluzba = "Služba" if "Služba" in df_ocistene.columns else None
 
-        mask_chybi_zaklad = (
-            df_ocistene[col_naklady].isna() | 
-            (df_ocistene[col_naklady].astype(str).str.strip() == "") | 
-            (df_ocistene[col_naklady].astype(str).str.strip() == "0") |
-            (df_ocistene[col_naklady] == 0)
+        # Zjištění, zda je sloupec Celkem roven 0
+        is_celkem_nula = pd.Series(False, index=df_ocistene.index)
+        if "Celkem" in df_ocistene.columns:
+            celkem_val = pd.to_numeric(df_ocistene["Celkem"], errors='coerce').fillna(0)
+            is_celkem_nula = (celkem_val == 0)
+
+        # 1. Kontrola chybějících nákladů (s výjimkou pro HELPDESK a Celkem == 0)
+        mask_chybi_naklad = (
+            df_ocistene[col_nakklady].isna() | 
+            (df_ocistene[col_nakklady].astype(str).str.strip() == "") | 
+            (df_ocistene[col_nakklady].astype(str).str.strip() == "0") |
+            (df_ocistene[col_nakklady] == 0)
         )
 
         if col_sluzba:
             is_helpdesk = df_ocistene[col_sluzba].astype(str).str.strip().str.upper() == "HELPDESK"
-            mask_chybi = mask_chybi_zaklad & (~is_helpdesk)
-        else:
-            mask_chybi = mask_chybi_zaklad
+            mask_chybi_naklad = mask_chybi_naklad & (~is_helpdesk)
 
-        df_ocistene["Stav nákladů"] = np.where(mask_chybi, "❌ Chybí náklad", "✅ V pořádku")
+        mask_chybi_naklad = mask_chybi_naklad & (~is_celkem_nula)
+
+        # 2. Kontrola pro Route 1 u specifických služeb (s výjimkou pro Celkem == 0)
+        mask_chybi_route = pd.Series(False, index=df_ocistene.index)
+        if col_sluzba and "Route 1" in df_ocistene.columns:
+            sluzby_pro_route = ["LETNBSPSLUZBA", "LETSLUZBA", "LETZMENA", "LETEMD"]
+            je_vybrana_sluzba = df_ocistene[col_sluzba].astype(str).str.strip().str.upper().isin(sluzby_pro_route)
+            
+            route1_val = df_ocistene["Route 1"]
+            route1_chybi = (
+                route1_val.isna() | 
+                (route1_val.astype(str).str.strip() == "") | 
+                (route1_val.astype(str).str.strip().str.lower() == "nan")
+            )
+            mask_chybi_route = je_vybrana_sluzba & route1_chybi & (~is_celkem_nula)
+
+        # Vytvoření detailního popisu chyby zvlášť pro náklady a zvlášť pro Route 1
+        def urci_stav(row_idx):
+            chyby = []
+            if mask_chybi_naklad.loc[row_idx]:
+                chyby.append("❌ Chybí náklad")
+            if mask_chybi_route.loc[row_idx]:
+                chyby.append("❌ Chybí Route 1")
+            
+            if chyby:
+                return " | ".join(chyby)
+            else:
+                return "✅ V pořádku"
+
+        df_ocistene["Stav nákladů"] = [urci_stav(i) for i in df_ocistene.index]
         df_ocistene["Datum vytvoření"] = df_ocistene["Datum_dt"].dt.strftime('%d.%m.%Y')
+
+        # Celková maska chyb pro filtrování
+        mask_chybi = mask_chybi_naklad | mask_chybi_route
 
         df_export_ocistene = df_ocistene.drop(columns=["Datum_dt", "Kod_Zakazky"], errors="ignore")
         df_chybi = df_export_ocistene[mask_chybi].copy()
@@ -219,7 +257,7 @@ if df is not None:
         m1, m2, m3 = st.columns(3)
         m1.metric("Celkem v měsíci", len(df_mesic))
         m2.metric("Vyřazené zakázky (jiný měsíc)", len(df_vyrazene))
-        m3.metric("⚠️ Chybějící náklady", len(df_chybi))
+        m3.metric("⚠️ Záznamy k řešení", len(df_chybi))
 
         if not df_vyrazene.empty:
             with st.expander("ℹ️ Zobrazit vyřazené zakázky z jiných měsíců"):
@@ -235,55 +273,4 @@ if df is not None:
         
         out_all = io.BytesIO()
         with pd.ExcelWriter(out_all, engine='openpyxl') as writer:
-            df_export_ocistene.to_excel(writer, index=False, sheet_name=f"Ocistene_{vybrany_mesic}_{vybrany_rok}")
-        
-        with col_d1:
-            st.download_button(
-                label="🟢 Stáhnout VŠECHNY očištěné zakázky (.xlsx)",
-                data=out_all.getvalue(),
-                file_name=f"BTT_Ocistena_Data_Komplet_{vybrany_mesic}_{vybrany_rok}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        if not df_chybi.empty:
-            out_chybi = io.BytesIO()
-            with pd.ExcelWriter(out_chybi, engine='openpyxl') as writer:
-                df_chybi.to_excel(writer, index=False, sheet_name="Chybejici_naklady")
-            
-            with col_d2:
-                st.download_button(
-                    label="🔴 Stáhnout POUZE zakázky CHYBĚJÍCÍ NÁKLAD (.xlsx)",
-                    data=out_chybi.getvalue(),
-                    file_name=f"BTT_Chybejici_Naklady_Komplet_{vybrany_mesic}_{vybrany_rok}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-
-        st.divider()
-        st.subheader("📧 Volitelné odeslání e-mailů referentům")
-        st.caption("E-maily odcházejí pouze po stisknutí tlačítka níže.")
-
-        muj_email = st.text_input("Zadejte e-mail pro testovací doručení (nebo nechte prázdné pro rozeslání referentům)", "")
-
-        if st.button("🚀 Odeslat e-mailová upozornění"):
-            if df_chybi.empty:
-                st.success("Všechny zakázky mají vyplněné náklady, e-maily není potřeba odesílat.")
-            else:
-                st.info("Odesílám upozornění...")
-                try:
-                    sender = st.secrets["smtp"]["sender_email"]
-                    pwd = st.secrets["smtp"]["password"]
-                    server_name = st.secrets["smtp"].get("server", "smtp.gmail.com")
-                except Exception:
-                    st.error("Chybí nastavení SMTP v Secrets!")
-                    sender = None
-
-                if sender:
-                    skupiny = df_chybi.groupby(col_referent)
-                    for referent, zakazky in skupiny:
-                        prijemce = muj_email if muj_email.strip() else najdi_email_referenta(referent)
-                        if not prijemce:
-                            st.warning(f"Chybí e-mail pro: {referent}")
-                            continue
-
-                        # Požadované sloupce do e-mailu
-                        mozi
+            df_export_ocistene.
