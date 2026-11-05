@@ -26,13 +26,13 @@ def unifikuj_sloupce(df):
             break
             
     # Datum vytvoření
-    for c in ['Datum vytvoření', 'Datum vytvoř.']:
+    for c in ['Datum vytvoření', 'Datum vytvoř.', 'Datum']:
         if c in df.columns:
             mapovani[c] = 'Datum vytvoření'
             break
             
-    # Referent / BD - upřednostníme 'Jméno referenta'
-    for c in ['BD', 'Jméno referenta', 'Referent']:
+    # Referent / BD
+    for c in ['BD', 'Referent', 'Jméno referenta']:
         if c in df.columns:
             mapovani[c] = 'BD'
             break
@@ -43,28 +43,25 @@ def unifikuj_sloupce(df):
             mapovani[c] = 'Náklady'
             break
 
-    # Název org.
+    # Název organizace / klienta
     for c in ['Název org.', 'Název org', 'Organizace', 'Klient']:
         if c in df.columns:
             mapovani[c] = 'Název org.'
             break
 
-    # Služba
-    for c in ['Služba', 'Druh služby', 'Typ služby']:
-        if c in df.columns:
-            mapovani[c] = 'Služba'
-            break
-
     return df.rename(columns=mapovani)
 
 # ==========================================
-# 2. MAPOVÁNÍ E-MAILŮ REFERENTŮ
+# 2. MAPOVÁNÍ E-MAILŮ (JMÉNA + SYSTÉMOVÉ KÓDY)
 # ==========================================
 EMAILY_REFERENTI = {
+    # Celá jména referentů
     "Martínková Hana": "martinkova@oktours.cz",
     "Okrouhlíková Iva": "okrouhlikova@oktours.cz",
+    "Novohradská Lucie": "lucie.novohradska@nemoletenky.cz",
     "Tlamichová Rita": "tlamichova@oktours.cz",
     "Haller Dan": "haller@oktours.cz",
+    "Daniel Haller": "haller@oktours.cz",
     "Adamcová Marta": "adamcova@oktours.cz",
     "Gazdová Pavlína": "gazdova@oktours.cz",
     "Jandošová Petra": "jandosovap@gmail.com",
@@ -77,23 +74,48 @@ EMAILY_REFERENTI = {
     "Chumpitaz Pavlína": "Chumpitaz@oktours.cz",
     "Zuzánková Nikola": "zuzankova@oktours.cz",
     "Trimidal Joshua": "Trimidal@oktours.cz",
-    "Hrubá Ludmila": "hruba@oktours.cz"
+
+    # Systémové zkratky a číselné kódy referentů
+    "HM": "martinkova@oktours.cz",
+    "IO": "okrouhlikova@oktours.cz",
+    "Z02424": "tlamichova@oktours.cz",
+    "Z12235": "pesatova@oktours.cz",
+    "Z12228": "gazdova@oktours.cz",
+    "Z56340": "vidermanova@oktours.cz",
+    "Z56261": "trebicky@oktours.cz",
+    "Z69805": "nekola@oktours.cz",
+    "Z76612": "jandosovap@gmail.com",
+    "Z12231": "delta.letenky@gmail.com",
+    "Z76611": "adamcova@oktours.cz",
+    "Z72348": "flenerova@oktours.cz",
+    "Z12230": "zuzankova@oktours.cz",
+    "Z12239": "Chumpitaz@oktours.cz",
+    "ZC0003": "lucie.novohradska@nemoletenky.cz",
 }
 
-def najdi_email_referenta(jmeno_referenta):
-    if not jmeno_referenta or pd.isna(jmeno_referenta):
+def najdi_email_referenta(identifikator):
+    """Vyhledá e-mail podle systémového kódu, jména nebo prohozeného pořadí jména a příjmení."""
+    if not identifikator or pd.isna(identifikator):
         return None
-    jmeno_std = str(jmeno_referenta).strip()
-    if jmeno_std in EMAILY_REFERENTI:
-        return EMAILY_REFERENTI[jmeno_std]
-    casti = jmeno_std.split()
+    val = str(identifikator).strip()
+    
+    # 1. Přímá shoda (kód např. 'IO', 'Z02424' nebo 'Martínková Hana')
+    if val in EMAILY_REFERENTI:
+        return EMAILY_REFERENTI[val]
+        
+    # 2. Shoda po otočení jména a příjmení (např. 'Hana Martínková')
+    casti = val.split()
     if len(casti) >= 2:
         otocene = f"{casti[1]} {casti[0]}"
         if otocene in EMAILY_REFERENTI:
             return EMAILY_REFERENTI[otocene]
-    for k, v in EMAILY_REFERENTI.items():
-        if casti[0].lower() in k.lower():
-            return v
+            
+    # 3. Shoda podle příjmení
+    if len(casti) >= 1:
+        for k, v in EMAILY_REFERENTI.items():
+            if casti[0].lower() in k.lower():
+                return v
+                
     return None
 
 def nacisti_iqy_obsah(file_bytes_or_str):
@@ -149,13 +171,8 @@ else:
         st.error(f"Chyba při načítání test_data.csv: {e}")
 
 if df is not None:
+    # Aplikace automatického sjednocení názvů sloupců
     df = unifikuj_sloupce(df)
-
-    # Definice klíčových sloupců
-    col_datum = "Datum vytvoření"
-    col_zakazka = "Zakázka"
-    col_nakklady = "Náklady"
-    col_referent = "BD"
 
     st.divider()
     st.subheader("1. Nastavení vyhodnocovaného období")
@@ -170,13 +187,19 @@ if df is not None:
     with col2:
         vybrany_mesic = st.selectbox("Měsíc", options=list(range(1, 13)), index=prev_month_date.month - 1, format_func=lambda m: f"{m}. měsíc")
 
-    potrebne = [col_datum, col_zakazka, col_nakklady, col_referent]
+    col_datum = "Datum vytvoření"
+    col_zakazka = "Zakázka"
+    col_naklady = "Náklady"
+    col_referent = "BD"
+
+    potrebne = [col_datum, col_zakazka, col_naklady, col_referent]
     chybi_cols = [c for c in potrebne if c not in df.columns]
 
     if chybi_cols:
         st.error(f"V souboru chybí tyto požadované sloupce: {chybi_cols}")
         st.info(f"Dostupné sloupce v souboru: {list(df.columns)}")
     else:
+        # Časový filtr podle data vytvoření
         start_date = datetime.date(vybrany_rok, vybrany_mesic, 1)
         end_date = datetime.date(vybrany_rok, vybrany_mesic, calendar.monthrange(vybrany_rok, vybrany_mesic)[1])
 
@@ -184,93 +207,9 @@ if df is not None:
         mask_datum = (df["Datum_dt"].dt.date >= start_date) & (df["Datum_dt"].dt.date <= end_date)
         df_mesic = df[mask_datum].copy()
 
+        # Filtr číselné řady (kód "00" + kód daného měsíce)
         kod_mesice_str = f"{vybrany_mesic:02d}"
         df_mesic["Kod_Zakazky"] = df_mesic[col_zakazka].astype(str).str.strip().str[5:7]
 
         platne_kody = ["00", kod_mesice_str]
         mask_platne = df_mesic["Kod_Zakazky"].isin(platne_kody)
-
-        df_ocistene = df_mesic[mask_platne].copy()
-        df_vyrazene = df_mesic[~mask_platne].copy()
-
-        col_sluzba = "Služba" if "Služba" in df_ocistene.columns else None
-
-        # Zjištění, zda je sloupec Celkem roven 0
-        is_celkem_nula = pd.Series(False, index=df_ocistene.index)
-        if "Celkem" in df_ocistene.columns:
-            celkem_val = pd.to_numeric(df_ocistene["Celkem"], errors='coerce').fillna(0)
-            is_celkem_nula = (celkem_val == 0)
-
-        # 1. Kontrola chybějících nákladů (s výjimkou pro HELPDESK a Celkem == 0)
-        mask_chybi_naklad = (
-            df_ocistene[col_nakklady].isna() | 
-            (df_ocistene[col_nakklady].astype(str).str.strip() == "") | 
-            (df_ocistene[col_nakklady].astype(str).str.strip() == "0") |
-            (df_ocistene[col_nakklady] == 0)
-        )
-
-        if col_sluzba:
-            is_helpdesk = df_ocistene[col_sluzba].astype(str).str.strip().str.upper() == "HELPDESK"
-            mask_chybi_naklad = mask_chybi_naklad & (~is_helpdesk)
-
-        mask_chybi_naklad = mask_chybi_naklad & (~is_celkem_nula)
-
-        # 2. Kontrola pro Route 1 u specifických služeb (s výjimkou pro Celkem == 0)
-        mask_chybi_route = pd.Series(False, index=df_ocistene.index)
-        if col_sluzba and "Route 1" in df_ocistene.columns:
-            sluzby_pro_route = ["LETNBSPSLUZBA", "LETSLUZBA", "LETZMENA", "LETEMD"]
-            je_vybrana_sluzba = df_ocistene[col_sluzba].astype(str).str.strip().str.upper().isin(sluzby_pro_route)
-            
-            route1_val = df_ocistene["Route 1"]
-            route1_chybi = (
-                route1_val.isna() | 
-                (route1_val.astype(str).str.strip() == "") | 
-                (route1_val.astype(str).str.strip().str.lower() == "nan")
-            )
-            mask_chybi_route = je_vybrana_sluzba & route1_chybi & (~is_celkem_nula)
-
-        # Vytvoření detailního popisu chyby zvlášť pro náklady a zvlášť pro Route 1
-        def urci_stav(row_idx):
-            chyby = []
-            if mask_chybi_naklad.loc[row_idx]:
-                chyby.append("❌ Chybí náklad")
-            if mask_chybi_route.loc[row_idx]:
-                chyby.append("❌ Chybí Route 1")
-            
-            if chyby:
-                return " | ".join(chyby)
-            else:
-                return "✅ V pořádku"
-
-        df_ocistene["Stav nákladů"] = [urci_stav(i) for i in df_ocistene.index]
-        df_ocistene["Datum vytvoření"] = df_ocistene["Datum_dt"].dt.strftime('%d.%m.%Y')
-
-        # Celková maska chyb pro filtrování
-        mask_chybi = mask_chybi_naklad | mask_chybi_route
-
-        df_export_ocistene = df_ocistene.drop(columns=["Datum_dt", "Kod_Zakazky"], errors="ignore")
-        df_chybi = df_export_ocistene[mask_chybi].copy()
-
-        st.divider()
-        st.subheader(f"📊 Výsledky pro {vybrany_mesic}/{vybrany_rok}")
-
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Celkem v měsíci", len(df_mesic))
-        m2.metric("Vyřazené zakázky (jiný měsíc)", len(df_vyrazene))
-        m3.metric("⚠️ Záznamy k řešení", len(df_chybi))
-
-        if not df_vyrazene.empty:
-            with st.expander("ℹ️ Zobrazit vyřazené zakázky z jiných měsíců"):
-                st.dataframe(df_vyrazene[[col_zakazka, col_datum, col_referent, "Kod_Zakazky"]], use_container_width=True)
-
-        st.subheader("📋 Očištěná data (Kompletní tabulka se všemi sloupci)")
-        st.dataframe(df_export_ocistene, use_container_width=True)
-
-        st.divider()
-        st.subheader("📥 Stažení výstupů v Excelu")
-        
-        col_d1, col_d2 = st.columns(2)
-        
-        out_all = io.BytesIO()
-        with pd.ExcelWriter(out_all, engine='openpyxl') as writer:
-            df_export_ocistene.
