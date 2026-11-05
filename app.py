@@ -19,31 +19,26 @@ def unifikuj_sloupce(df):
     """Sjednotí klíčové názvy sloupců a ponechá všechny ostatní sloupce nedotčené."""
     mapovani = {}
     
-    # Číslo / Kód zakázky
     for c in ['Zakázka', 'Kód', 'Číslo zakázky']:
         if c in df.columns:
             mapovani[c] = 'Zakázka'
             break
             
-    # Datum vytvoření
     for c in ['Datum vytvoření', 'Datum vytvoř.', 'Datum']:
         if c in df.columns:
             mapovani[c] = 'Datum vytvoření'
             break
             
-    # Referent / BD
     for c in ['BD', 'Referent', 'Jméno referenta']:
         if c in df.columns:
             mapovani[c] = 'BD'
             break
             
-    # Náklady
     for c in ['Náklady', 'Náklad']:
         if c in df.columns:
             mapovani[c] = 'Náklady'
             break
 
-    # Název organizace / klienta
     for c in ['Název org.', 'Název org', 'Organizace', 'Klient']:
         if c in df.columns:
             mapovani[c] = 'Název org.'
@@ -94,23 +89,20 @@ EMAILY_REFERENTI = {
 }
 
 def najdi_email_referenta(identifikator):
-    """Vyhledá e-mail podle systémového kódu, jména nebo prohozeného pořadí jména a příjmení."""
+    """Vyhledá e-mail podle systémového kódu nebo jména."""
     if not identifikator or pd.isna(identifikator):
         return None
     val = str(identifikator).strip()
     
-    # 1. Přímá shoda (kód např. 'IO', 'Z02424' nebo 'Martínková Hana')
     if val in EMAILY_REFERENTI:
         return EMAILY_REFERENTI[val]
         
-    # 2. Shoda po otočení jména a příjmení (např. 'Hana Martínková')
     casti = val.split()
     if len(casti) >= 2:
         otocene = f"{casti[1]} {casti[0]}"
         if otocene in EMAILY_REFERENTI:
             return EMAILY_REFERENTI[otocene]
             
-    # 3. Shoda podle příjmení
     if len(casti) >= 1:
         for k, v in EMAILY_REFERENTI.items():
             if casti[0].lower() in k.lower():
@@ -171,22 +163,9 @@ else:
         st.error(f"Chyba při načítání test_data.csv: {e}")
 
 if df is not None:
-    # Aplikace automatického sjednocení názvů sloupců
     df = unifikuj_sloupce(df)
 
-    st.divider()
-    st.subheader("1. Nastavení vyhodnocovaného období")
-    
-    col1, col2 = st.columns(2)
-    today = datetime.date.today()
-    first_curr = today.replace(day=1)
-    prev_month_date = first_curr - datetime.timedelta(days=1)
-    
-    with col1:
-        vybrany_rok = st.number_input("Rok", min_value=2020, max_value=2030, value=prev_month_date.year)
-    with col2:
-        vybrany_mesic = st.selectbox("Měsíc", options=list(range(1, 13)), index=prev_month_date.month - 1, format_func=lambda m: f"{m}. měsíc")
-
+    # Odstranění prázdných řádků a systémových patiček (např. 'Počet vyhledaných záznamů')
     col_datum = "Datum vytvoření"
     col_zakazka = "Zakázka"
     col_naklady = "Náklady"
@@ -199,17 +178,28 @@ if df is not None:
         st.error(f"V souboru chybí tyto požadované sloupce: {chybi_cols}")
         st.info(f"Dostupné sloupce v souboru: {list(df.columns)}")
     else:
-        # Časový filtr podle data vytvoření
+        df = df.dropna(subset=[col_zakazka, col_datum]).copy()
+        df = df[~df[col_zakazka].astype(str).str.startswith("Počet")].copy()
+
+        st.divider()
+        st.subheader("1. Nastavení vyhodnocovaného období")
+        
+        col1, col2 = st.columns(2)
+        today = datetime.date.today()
+        first_curr = today.replace(day=1)
+        prev_month_date = first_curr - datetime.timedelta(days=1)
+        
+        with col1:
+            vybrany_rok = st.number_input("Rok", min_value=2020, max_value=2030, value=prev_month_date.year)
+        with col2:
+            vybrany_mesic = st.selectbox("Měsíc", options=list(range(1, 13)), index=prev_month_date.month - 1, format_func=lambda m: f"{m}. měsíc")
+
         start_date = datetime.date(vybrany_rok, vybrany_mesic, 1)
         end_date = datetime.date(vybrany_rok, vybrany_mesic, calendar.monthrange(vybrany_rok, vybrany_mesic)[1])
 
-        df["Datum_dt"] = pd.to_datetime(df[col_datum], errors='coerce')
+        # Klíčová oprava: dayfirst=True pro správné načtení českého formátu DD.MM.YYYY
+        df["Datum_dt"] = pd.to_datetime(df[col_datum], dayfirst=True, errors='coerce')
         mask_datum = (df["Datum_dt"].dt.date >= start_date) & (df["Datum_dt"].dt.date <= end_date)
         df_mesic = df[mask_datum].copy()
 
-        # Filtr číselné řady (kód "00" + kód daného měsíce)
-        kod_mesice_str = f"{vybrany_mesic:02d}"
-        df_mesic["Kod_Zakazky"] = df_mesic[col_zakazka].astype(str).str.strip().str[5:7]
-
-        platne_kody = ["00", kod_mesice_str]
-        mask_platne = df_mesic["Kod_Zakazky"].isin(platne_kody)
+        # Filtr číselné řady (kód "0
